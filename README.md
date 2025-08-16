@@ -45,8 +45,8 @@ This [video](https://www.youtube.com/watch?v=d1r9o559xkM) demonstrates VS Code u
 Built with:
 - **ASP.NET Core** and **.NET 9.0**
 - **[C# MCP SDK](https://github.com/modelcontextprotocol/csharp-sdk)** for protocol implementation
-- **Microsoft.PowerPlatform.Dataverse.Client** for Dataverse integration
-- **ModelContextProtocol.AspNetCore** v0.3.0-preview.3
+- **[Microsoft.PowerPlatform.Dataverse.Client](https://www.nuget.org/packages/Microsoft.PowerPlatform.Dataverse.Client/)** for Dataverse integration
+- **[ModelContextProtocol.AspNetCore](https://github.com/modelcontextprotocol/csharp-sdk/tree/main/src/ModelContextProtocol.AspNetCore)** v0.3.0-preview.3
 
 ## Getting Started
 
