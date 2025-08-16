@@ -1,0 +1,10 @@
+{
+    "chat.mcp.serverSampling": {
+        "Mcp_ResourceLinks/.vscode/mcp.json: MyDataverseMcpServer": {
+            "allowedDuringChat": true,
+            "allowedModels": [
+                "copilot/gpt-4.1"
+            ]
+        }
+    }
+}

@@ -1,0 +1,9 @@
+{
+	"servers": {
+		"MyDataverseMcpServer": {
+			"url": "http://localhost:3001",
+			"type": "http"
+		}
+	},
+	"inputs": []
+}
