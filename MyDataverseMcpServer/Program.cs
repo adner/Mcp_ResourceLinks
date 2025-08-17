@@ -64,6 +64,26 @@ var app = builder.Build();
 
 app.MapMcp();
 
+// Dynamic HTML resource endpoint: /dynamic/{id}.html
+app.MapGet("/dynamic/{file}", (string file) =>
+{
+    // Expect file like "1.html"
+    if (!file.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        return Results.NotFound();
+
+    // Reconstruct original file:// uri pattern used for storage lookup (we'll search by extension-insensitive id)
+    // Our storage currently keys by full resource Uri. We'll iterate to find matching html resource with that file name
+    var match = ResourceCatalog.Items.Values.FirstOrDefault(r => r.MimeType == "text/html" && r.Uri.EndsWith($"/{file}", StringComparison.OrdinalIgnoreCase));
+    if (match == null)
+        return Results.NotFound();
+
+    if (!ResourceAdder.TryGet(match.Uri, out var mime, out var text, out var binary))
+        return Results.NotFound();
+
+    var content = text ?? (binary != null ? System.Text.Encoding.UTF8.GetString(binary) : string.Empty);
+    return Results.Content(content, mime);
+});
+
 app.Run("http://localhost:3001");
 
 [McpServerToolType]
@@ -122,7 +142,7 @@ public static class Tools
         }
     }
 
-    [McpServerTool, Description("Executes an FetchXML request using the supplied expression that needs to be a valid FetchXml expression. Also suppply a description of the query in natural language. Returns the result as a JSON string, if there are less than 21 results, otherwise give the user the option (through MCP elicitation) of returning a Resource Uri to the result instead. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
+    [McpServerTool, Description("Executes an FetchXML request using the supplied expression that needs to be a valid FetchXml expression. Also supply a description of the query in natural language. Returns the result as a JSON string, if there are less than 21 results, otherwise give the user the option (through MCP elicitation) of returning a Resource Uri to the result instead. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
     public static async Task<string> ExecuteFetch([Description("The FetchXml query.")]string fetchXmlRequest,[Description("A description of the expected result of the query in natural language in maximum 20 characters, which will be used to describe a resource containing the result. Example: 'The top 5 contacts, firstname and lastname.'")]string queryDescription, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
     {
         try
@@ -145,6 +165,45 @@ public static class Tools
             return errorString;
         }
     }
+
+    [McpServerTool, Description("Executes an FetchXML request using the supplied expression that needs to be a valid FetchXml expression, then create a report using Chart.js that visualizes the result and returns a link to the report. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
+    public static async Task<string> CreateReport([Description("The FetchXml query. Should be kept simple, no aggregate functions!")]string fetchXmlRequest,[Description("A description in natural language of the report that is to be created.'")]string reportDescription, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
+    {
+        try
+        {
+            FetchExpression fetchExpression = new FetchExpression(fetchXmlRequest);
+            EntityCollection result = orgService.RetrieveMultiple(fetchExpression);
+
+            var jsonResult = Newtonsoft.Json.JsonConvert.SerializeObject(result);
+
+            var samplingResponse = await server.SampleAsync([
+                 new ChatMessage(ChatRole.User, $"A report should be generated in Chart.js that fulfills this requirement: {reportDescription}. I want you to create Chart.js code that replaces the '[ChartJsCode]' placeholder in this template: ```const ctx = document.getElementById('myChart'); [ChartJsCode] new Chart(ctx, config);  ``` Only return the exact code, nothing else. The data that the report should be based on is the following: {jsonResult}"),
+            ],
+             options: new ChatOptions
+             {
+                 MaxOutputTokens = 65536,
+                 Temperature = 0f,
+             },
+             cancellationToken: ct);
+            // Read the template file
+            string templatePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "chartTemplates", "template.html");
+            string templateHtml = await File.ReadAllTextAsync(templatePath, ct);
+
+            // Replace the placeholder
+            string reportHtml = templateHtml.Replace("[ChartJsCode]", samplingResponse.Text);
+
+             var uri = await ResourceAdder.AddHtmlFile(server, DateTime.Now.ToString(), reportHtml, ct, reportDescription);
+            return $"The report has been saved to an MCP resource and is viewable at: {uri}. You can open this URL in a browser, or add it as context via 'Add Context...' -> 'MCP Resources' in the Copilot chat window.";
+        }
+        catch (Exception err)
+        {
+            var errorString = "[ERROR] " + err.ToString();
+            Console.Error.WriteLine(err.ToString());
+
+            return errorString;
+        }
+    }
+
 
     [McpServerTool, Description("Executes a WhoAmI request against Dataverse.")]
     public static string WhoAmI(IOrganizationService orgService)
@@ -268,10 +327,12 @@ public static class ResourceAdder
     private record FileEntry(string MimeType, string? TextContent, byte[]? BinaryContent);
     private static readonly ConcurrentDictionary<string, FileEntry> _files = new();
     private static int _counter = 0; // starts at 0 so first file becomes 1
+    private const string BaseHttpUrl = "http://localhost:3001"; // TODO: derive from configuration if needed
 
     private static string NextUri(string fileExtension)
     {
         int id = Interlocked.Increment(ref _counter); // thread-safe
+
         return $"file://files/{id}.{fileExtension}";
     }
 
@@ -292,6 +353,33 @@ public static class ResourceAdder
         await AddAsync(server, resource, ct);
 
         return uri;
+    }
+    
+     public static async Task<string> AddHtmlFile(IMcpServer server, string resourceName, string content, CancellationToken ct, string description)
+    {
+        // Create an internal file:// uri for storage & MCP catalog key
+        string internalUri = NextUri("html"); // e.g. file://files/3.html
+        var idFileName = internalUri.Split('/').Last(); // 3.html
+
+        // Public HTTP URL exposed via dynamic endpoint
+        string publicUrl = $"{BaseHttpUrl}/dynamic/{idFileName}";
+
+        var resource = new Resource
+        {
+            Uri = publicUrl, // Expose HTTP URL to clients
+            Name = resourceName,
+            Title = resourceName,
+            MimeType = "text/html",
+            Description = description
+        };
+
+        // Store under internalUri so retrieval endpoint can locate it; also store under public URL for direct mapping
+        _files[internalUri] = new FileEntry(resource.MimeType!, content, null);
+        _files[resource.Uri] = new FileEntry(resource.MimeType!, content, null);
+
+        await AddAsync(server, resource, ct);
+
+        return resource.Uri;
     }
 
     // Exposed for read handler only

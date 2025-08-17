@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chart.js Bar Chart (CDN)</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; margin: 0; padding: 2rem; }
+    .chart-wrap { max-width: 780px; margin: 0 auto; }
+    h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+    /* Let Chart.js handle sizing; canvas will expand to container width */
+    canvas { display: block; width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+  <div class="chart-wrap">
+    <h1>Sales by Month</h1>
+    <canvas id="myChart" aria-label="Bar chart of sales by month" role="img"></canvas>
+  </div>
+
+  <!-- Chart.js from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    // Build a simple bar chart
+    const ctx = document.getElementById('myChart');
+
+    const data = {
+      labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+      datasets: [{
+        label: 'Units',
+        data: [12, 19, 7, 11, 15, 9],
+        backgroundColor: 'rgba(54, 162, 235, 0.5)',
+        borderColor: 'rgb(54, 162, 235)',
+        borderWidth: 1
+      }]
+    };
+
+    const config = {
+      type: 'bar',
+      data,
+      options: {
+        responsive: true,
+        // keep default maintainAspectRatio: true for a simple, clean look
+        scales: {
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: 'Units' },
+            ticks: { precision: 0 }
+          },
+          x: {
+            title: { display: true, text: 'Month' }
+          }
+        },
+        plugins: {
+          legend: { display: true },
+          tooltip: { enabled: true }
+        }
+      }
+    };
+
+    new Chart(ctx, config);
+  </script>
+</body>
+</html>
