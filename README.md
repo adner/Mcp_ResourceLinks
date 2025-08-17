@@ -1,20 +1,20 @@
 # Dataverse MCP Server - Advanced MCP Features Showcase
 
-This repository demonstrates a sophisticated **Model Context Protocol (MCP) Server** that integrates with Microsoft Dataverse and showcases advanced MCP capabilities beyond basic tool execution.
+This repository demonstrates a sophisticated **Model Context Protocol (MCP) Server** that integrates with Microsoft Dataverse and showcases advanced MCP capabilities.
 
 ## Key MCP Features Implemented
 
 ### 🔄 [MCP Elicitation](https://modelcontextprotocol.io/specification/draft/client/elicitation)
-Interactive decision-making for users when FetchXML queries return large result sets (>20 records). The server prompts users to choose between receiving raw JSON or saving results as formatted resources.
+When FetchXML queries return large result sets (>20 records), the server prompts users to choose between receiving raw JSON or saving results as formatted resources.
 
 ### 🧠 [MCP Sampling](https://modelcontextprotocol.io/specification/draft/client/sampling)
-Intelligent data transformation by calling the LLM to convert raw Dataverse JSON responses into user-friendly markdown tables with proper formatting and structure.
+Data transformation by internal calls to the LLM - **sampling** - to convert raw Dataverse JSON responses into user-friendly markdown tables with proper formatting and structure.
 
 ### 📁 [MCP Resources](https://modelcontextprotocol.io/specification/draft/server/resources)
-Dynamic resource creation that stores transformed data as accessible resources within the MCP ecosystem, complete with descriptive metadata and markdown formatting.
+Dynamic resource creation that stores transformed data as accessible resources available from the MCP Server.
 
 ### 📊 [MCP Progress](https://modelcontextprotocol.io/specification/draft/client/progress)
-Real-time progress notifications during bulk operations (e.g., creating multiple contact records) with detailed status updates and completion tracking.
+Real-time progress notifications during bulk operations (e.g., creating multiple contact records) with status updates and completion tracking.
 
 ## How It Works
 
@@ -37,8 +37,8 @@ Real-time progress notifications during bulk operations (e.g., creating multiple
 
 This [video](https://www.youtube.com/watch?v=d1r9o559xkM) demonstrates VS Code using this MCP Server to:
 - Retrieve Dataverse data through FetchXML queries
-- Transform large result sets into formatted resources
-- Add resources to the AI context window for enhanced conversations
+- Transform large result sets into `Markdown` formatted resources
+- Optional adding of resources to the AI context window.
 
 ## Technical Implementation
 
