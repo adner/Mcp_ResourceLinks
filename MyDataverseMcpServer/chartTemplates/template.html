@@ -7,10 +7,15 @@
   <style>
     :root { color-scheme: light dark; }
     body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; margin: 0; padding: 2rem; }
-    .chart-wrap { max-width: 780px; margin: 0 auto; }
+    .chart-wrap {
+      position: relative;       /* required for responsive canvas sizing */
+      max-width: 780px;
+      height: 400px;            /* controls chart height */
+      margin: 0 auto;
+    }
     h1 { font-size: 1.25rem; margin: 0 0 1rem; }
-    /* Let Chart.js handle sizing; canvas will expand to container width */
-    canvas { display: block; width: 100%; height: auto; }
+    /* Let Chart.js size the canvas; don't set width/height here */
+    canvas { display: block; }
   </style>
 </head>
 <body>
@@ -22,10 +27,20 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script>
-    // Build a simple bar chart
+    // Build a simple chart
     const ctx = document.getElementById('myChart');
 
-    [ChartJsCode]
+    [ChartJsCode] 
+
+    if (!window.config) window.config = {};
+    config.options = config.options || {};
+    config.options.responsive = true;
+    config.options.maintainAspectRatio = false; // fill the .chart-wrap height
+
+    // (Optional) If you want to control height via aspect ratio instead of fixed height,
+    // remove .chart-wrap{height:400px} above and use:
+    // config.options.maintainAspectRatio = true;
+    // config.options.aspectRatio = 2; // width / height
 
     new Chart(ctx, config);
   </script>
