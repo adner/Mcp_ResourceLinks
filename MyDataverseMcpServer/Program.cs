@@ -9,6 +9,8 @@ using ModelContextProtocol.Server;
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Threading;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.AspNetCore.StaticFiles;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -64,14 +66,39 @@ var app = builder.Build();
 
 app.MapMcp();
 
+// Serve static assets (e.g. logo.png) from chartTemplates folder under the /dynamic path.
+// This runs before the dynamic resource endpoint below. If a physical file (like logo.png) exists
+// it will be served directly; otherwise the request falls through to the dynamic handler.
+// NOTE: Use ContentRootPath so we can serve files from the project directory during development
+// (AppContext.BaseDirectory points to bin output where the folder may not be copied yet.)
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(Path.Combine(builder.Environment.ContentRootPath, "chartTemplates")),
+    RequestPath = "/dynamic"
+});
+
 // Dynamic HTML resource endpoint: /dynamic/{id}.html
 app.MapGet("/dynamic/{file}", (string file) =>
 {
-    // Support serving .html and .md files that were published with public HTTP URLs.
+    // Basic filename sanitization (no path traversal / dir separators)
+    if (file.IndexOfAny(new[] { '/', '\\' }) >= 0)
+        return Results.NotFound();
+
+    // 1. Attempt to serve any physical file from chartTemplates (e.g., logo.png) if it exists.
+    var staticDir = Path.Combine(app.Environment.ContentRootPath, "chartTemplates");
+    var physicalPath = Path.Combine(staticDir, file);
+    if (File.Exists(physicalPath))
+    {
+        var provider = new FileExtensionContentTypeProvider();
+        if (!provider.TryGetContentType(physicalPath, out var contentType))
+            contentType = "application/octet-stream";
+        return Results.File(physicalPath, contentType);
+    }
+
+    // 2. Support serving dynamically published HTML / Markdown resources.
     if (!(file.EndsWith(".html", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".md", StringComparison.OrdinalIgnoreCase)))
         return Results.NotFound();
 
-    // Find a resource whose Uri ends with the provided file segment and whose mime type matches allowed types.
     var match = ResourceCatalog.Items.Values.FirstOrDefault(r =>
         r.Uri.EndsWith($"/{file}", StringComparison.OrdinalIgnoreCase) &&
         (r.MimeType == "text/html" || r.MimeType == "text/markdown" || r.MimeType == "text/plain")
@@ -145,7 +172,7 @@ public static class Tools
     }
 
     [McpServerTool, Description("Executes an FetchXML request using the supplied expression that needs to be a valid FetchXml expression. Also supply a description of the query in natural language. Returns the result as a JSON string, if there are less than 21 results, otherwise give the user the option (through MCP elicitation) of returning a Resource Uri to the result instead. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
-    public static async Task<string> ExecuteFetch([Description("The FetchXml query.")]string fetchXmlRequest,[Description("A description of the expected result of the query in natural language in maximum 20 characters, which will be used to describe a resource containing the result. Example: 'The top 5 contacts, firstname and lastname.'")]string queryDescription, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
+    public static async Task<string> ExecuteFetch([Description("The FetchXml query.")] string fetchXmlRequest, [Description("A description of the expected result of the query in natural language in maximum 20 characters, which will be used to describe a resource containing the result. Example: 'The top 5 contacts, firstname and lastname.'")] string queryDescription, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
     {
         try
         {
@@ -169,7 +196,7 @@ public static class Tools
     }
 
     [McpServerTool, Description("Executes an FetchXML request using the supplied expression that needs to be a valid FetchXml expression, then create a report using Chart.js that visualizes the result and returns a link to the report. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
-    public static async Task<string> CreateReportFromQuery([Description("The FetchXml query. Should be kept simple, no aggregate functions!")]string fetchXmlRequest,[Description("A description in natural language of the report that is to be created.'")]string reportDescription, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
+    public static async Task<string> CreateReportFromQuery([Description("The FetchXml query. Should be kept simple, no aggregate functions!")] string fetchXmlRequest, [Description("A description in natural language of the report that is to be created.'")] string reportDescription, [Description("A heading for the report. Max 20 characters.")] string reportHeading, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
     {
         try
         {
@@ -194,7 +221,9 @@ public static class Tools
             // Replace the placeholder
             string reportHtml = templateHtml.Replace("[ChartJsCode]", samplingResponse.Text);
 
-             var uri = await ResourceAdder.AddHtmlFile(server, DateTime.Now.ToString(), reportHtml, ct, reportDescription);
+            reportHtml = reportHtml.Replace("[reportHeading]", reportHeading);
+
+            var uri = await ResourceAdder.AddHtmlFile(server, DateTime.Now.ToString(), reportHtml, ct, reportDescription);
             return $"The report has been saved to an MCP resource and is viewable at: {uri}. You can open this URL in a browser, or add it as context via 'Add Context...' -> 'MCP Resources' in the Copilot chat window.";
         }
         catch (Exception err)
@@ -207,7 +236,7 @@ public static class Tools
     }
 
     [McpServerTool, Description("Creates a report using Chart.js that visualizes the provided data and returns a link to the report. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
-    public static async Task<string> CreateReportFromData([Description("The data in CSV format.")]string csvData,[Description("A description in natural language of the report that is to be created.'")]string reportDescription, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
+    public static async Task<string> CreateReportFromData([Description("The data in CSV format.")]string csvData,[Description("A description in natural language of the report that is to be created.'")]string reportDescription, [Description("A heading for the report. Max 20 characters.")] string reportHeading, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
     {
         try
         {
@@ -226,6 +255,8 @@ public static class Tools
 
             // Replace the placeholder
             string reportHtml = templateHtml.Replace("[ChartJsCode]", samplingResponse.Text);
+
+            reportHtml = reportHtml.Replace("[reportHeading]", reportHeading);
 
              var uri = await ResourceAdder.AddHtmlFile(server, DateTime.Now.ToString(), reportHtml, ct, reportDescription);
             return $"The report has been saved to an MCP resource and is viewable at: {uri}. You can open this URL in a browser, or add it as context via 'Add Context...' -> 'MCP Resources' in the Copilot chat window.";

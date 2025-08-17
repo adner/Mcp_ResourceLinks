@@ -6,43 +6,77 @@
   <title>Chart.js Bar Chart (CDN)</title>
   <style>
     :root { color-scheme: light dark; }
-    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; margin: 0; padding: 2rem; }
-    .chart-wrap {
-      position: relative;       /* required for responsive canvas sizing */
-      max-width: 780px;
-      height: 400px;            /* controls chart height */
-      margin: 0 auto;
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      margin: 0;
+      padding: 0;
     }
-    h1 { font-size: 1.25rem; margin: 0 0 1rem; }
-    /* Let Chart.js size the canvas; don't set width/height here */
-    canvas { display: block; }
+    header {
+      display: flex;
+      align-items: center;
+      background-color: white;
+      padding: 1rem 2rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    header img {
+      height: 60px;   /* bigger logo */
+      margin-right: 1rem;
+    }
+    header h1 {
+      font-size: 1.5rem;
+      margin: 0;
+      color: black;
+    }
+    .chart-wrap {
+      position: relative;
+      max-width: 780px;
+      height: 400px;
+      margin: 2rem auto;
+      padding: 0 2rem;
+    }
+    canvas {
+      display: block;
+    }
+    footer {
+      text-align: center;
+      font-size: 0.9rem;
+      color: #555;
+      margin: 2rem 0;
+    }
   </style>
 </head>
 <body>
+  <header>
+    <img src="/dynamic/logo.png" alt="Logo" />
+    <h1>[reportHeading]</h1>
+  </header>
+
   <div class="chart-wrap">
     <canvas id="myChart" role="img"></canvas>
   </div>
+
+  <footer id="reportFooter"></footer>
 
   <!-- Chart.js from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <script>
-    // Build a simple chart
     const ctx = document.getElementById('myChart');
 
-    [ChartJsCode] 
+    [ChartJsCode]  // should define a 'config' object
 
     if (!window.config) window.config = {};
     config.options = config.options || {};
     config.options.responsive = true;
-    config.options.maintainAspectRatio = false; // fill the .chart-wrap height
-
-    // (Optional) If you want to control height via aspect ratio instead of fixed height,
-    // remove .chart-wrap{height:400px} above and use:
-    // config.options.maintainAspectRatio = true;
-    // config.options.aspectRatio = 2; // width / height
+    config.options.maintainAspectRatio = false;
 
     new Chart(ctx, config);
+
+    // Add report generation timestamp
+    const now = new Date();
+    const formatted = now.toLocaleString(); // local date + time
+    document.getElementById("reportFooter").textContent =
+      "Report generated: " + formatted;
   </script>
 </body>
 </html>
