@@ -39,9 +39,15 @@
     }
     footer {
       text-align: center;
-      font-size: 0.9rem;
-      color: #555;
+      font-size: 1.1rem;
+      color: #FFFF;
       margin: 2rem 0;
+    }
+    #additionalContent {
+      max-width: 780px;
+      margin: 0 auto 2rem; /* center block and add bottom spacing */
+      text-align: center;  /* center inline content */
+      padding: 0 2rem;     /* horizontal padding similar to chart */
     }
   </style>
 </head>
@@ -55,6 +61,10 @@
     <canvas id="myChart" role="img"></canvas>
   </div>
 
+  <div id="additionalContent">
+    
+  </div>
+
   <footer id="reportFooter"></footer>
 
   <!-- Chart.js from CDN -->
@@ -65,10 +75,27 @@
 
     [ChartJsCode]  // should define a 'config' object
 
+    // Ensure label, legend, and axis tick colors are bright white
     if (!window.config) window.config = {};
     config.options = config.options || {};
     config.options.responsive = true;
     config.options.maintainAspectRatio = false;
+
+    // Set label/legend/tick colors to white for all chart types
+    if (!config.options.plugins) config.options.plugins = {};
+    config.options.plugins.legend = config.options.plugins.legend || {};
+    config.options.plugins.legend.labels = config.options.plugins.legend.labels || {};
+    config.options.plugins.legend.labels.color = '#FFFFFF';
+    config.options.plugins.tooltip = config.options.plugins.tooltip || {};
+    config.options.plugins.tooltip.bodyColor = '#FFFFFF';
+    config.options.plugins.tooltip.titleColor = '#FFFFFF';
+    if (config.options.scales) {
+      for (const axis of Object.values(config.options.scales)) {
+        axis.ticks = axis.ticks || {};
+        axis.ticks.color = '#FFFFFF';
+        if (axis.title) axis.title.color = '#FFFFFF';
+      }
+    }
 
     new Chart(ctx, config);
 

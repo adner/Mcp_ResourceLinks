@@ -116,15 +116,15 @@ app.MapGet("/dynamic/{file}", (string file) =>
 app.Run("http://localhost:3001");
 
 [McpServerToolType]
-public static class Tools
+public static partial class Tools
 {
     // Prompts user to save large result as a resource, returns either the resource URI or the JSON result
-    private static async Task<string> promptToSaveLargeResultAsResource(EntityCollection result, IMcpServer server, CancellationToken ct, string queryDescription)
+    private static async Task<string> promptToSaveResultAsResource(EntityCollection result, IMcpServer server, CancellationToken ct, string queryDescription)
     {
         var createResource = await server.ElicitAsync(
             new()
             {
-                Message = $"More than 20 results. Do you want to get the result as a Resource instead?",
+                Message = $"Do you want to get the result as a Resource?",
                 RequestedSchema = new()
                 {
                     Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>()
@@ -179,12 +179,7 @@ public static class Tools
             FetchExpression fetchExpression = new FetchExpression(fetchXmlRequest);
             EntityCollection result = orgService.RetrieveMultiple(fetchExpression);
 
-            if (result.Entities.Count > 20)
-            {
-                return await promptToSaveLargeResultAsResource(result, server, ct, queryDescription);
-            }
-            // For 20 or fewer results, just return the JSON
-            return Newtonsoft.Json.JsonConvert.SerializeObject(result);
+            return await promptToSaveResultAsResource(result, server, ct, queryDescription);
         }
         catch (Exception err)
         {
@@ -196,17 +191,23 @@ public static class Tools
     }
 
     [McpServerTool, Description("Executes an FetchXML request using the supplied expression that needs to be a valid FetchXml expression, then create a report using Chart.js that visualizes the result and returns a link to the report. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
-    public static async Task<string> CreateReportFromQuery([Description("The FetchXml query. Should be kept simple, no aggregate functions!")] string fetchXmlRequest, [Description("A description in natural language of the report that is to be created.'")] string reportDescription, [Description("A heading for the report. Max 20 characters.")] string reportHeading, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
+    public static async Task<string> CreateReportFromQuery([Description("The FetchXml query. Should be kept simple, no aggregate functions!")] string fetchXmlRequest, [Description("A description in natural language of the report that is to be created.'")] string reportDescription, [Description("A heading for the report. Max 50 characters.")] string reportHeading, IOrganizationService orgService, IMcpServer server, RequestContext<CallToolRequestParams> context, CancellationToken ct)
     {
         try
         {
+            ProgressToken? progressToken = context.Params?.ProgressToken is ProgressToken pt ? pt : null;   
+
+            await NotifyProgress(server, progressToken, 0, "Executing query...");
+
             FetchExpression fetchExpression = new FetchExpression(fetchXmlRequest);
             EntityCollection result = orgService.RetrieveMultiple(fetchExpression);
+            
+            await NotifyProgress(server, progressToken, 1, "Generating report...");
 
             var jsonResult = Newtonsoft.Json.JsonConvert.SerializeObject(result);
 
             var samplingResponse = await server.SampleAsync([
-                 new ChatMessage(ChatRole.User, $"A report should be generated in Chart.js that fulfills this requirement: {reportDescription}. I want you to create Chart.js code that replaces the '[ChartJsCode]' placeholder in this template: ```const ctx = document.getElementById('myChart'); [ChartJsCode] new Chart(ctx, config);  ``` Only return the exact code, nothing else. The data that the report should be based on is the following: {jsonResult}"),
+                 new ChatMessage(ChatRole.User, $"A report should be generated in Chart.js that fulfills this requirement: {reportDescription}. I want you to create Chart.js code that replaces the '[ChartJsCode]' placeholder in this template: ```const ctx = document.getElementById('myChart'); [ChartJsCode] new Chart(ctx, config);  ``` Only return the exact code, nothing else. Dont't return markdown, always return pure Javascript code. The data that the report should be based on is the following: {jsonResult}. If you need to insert data under the chart, there is a div with id 'additionalContent' that you can access using Javascript."),
             ],
              options: new ChatOptions
              {
@@ -214,6 +215,7 @@ public static class Tools
                  Temperature = 0f,
              },
              cancellationToken: ct);
+
             // Read the template file
             string templatePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "chartTemplates", "template.html");
             string templateHtml = await File.ReadAllTextAsync(templatePath, ct);
@@ -236,12 +238,16 @@ public static class Tools
     }
 
     [McpServerTool, Description("Creates a report using Chart.js that visualizes the provided data and returns a link to the report. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
-    public static async Task<string> CreateReportFromData([Description("The data in CSV format.")]string csvData,[Description("A description in natural language of the report that is to be created.'")]string reportDescription, [Description("A heading for the report. Max 20 characters.")] string reportHeading, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
+    public static async Task<string> CreateReportFromData([Description("The data in CSV format.")]string csvData,[Description("A description in natural language of the report that is to be created.'")]string reportDescription, [Description("A heading for the report. Max 50 characters.")] string reportHeading, IOrganizationService orgService, IMcpServer server, RequestContext<CallToolRequestParams> context, CancellationToken ct)
     {
         try
         {
+            ProgressToken? progressToken = context.Params?.ProgressToken is ProgressToken pt ? pt : null;  
+
+            await NotifyProgress(server, progressToken, 1, "Generating report...");
+
             var samplingResponse = await server.SampleAsync([
-                 new ChatMessage(ChatRole.User, $"A report should be generated in Chart.js that fulfills this requirement: {reportDescription}. I want you to create Chart.js code that replaces the '[ChartJsCode]' placeholder in this template: ```const ctx = document.getElementById('myChart'); [ChartJsCode] new Chart(ctx, config);  ``` Only return the exact code, nothing else. The data that the report should be based on is the following: {csvData}"),
+                 new ChatMessage(ChatRole.User, $"A report should be generated in Chart.js that fulfills this requirement: {reportDescription}. I want you to create Chart.js code that replaces the '[ChartJsCode]' placeholder in this template: ```const ctx = document.getElementById('myChart'); [ChartJsCode] new Chart(ctx, config);  ``` Only return the exact code, nothing else. Dont't return markdown, always return pure Javascript code. The data that the report should be based on is the following: {csvData}. If you need to insert data under the chart, there is a div with id 'additionalContent' that you can access using Javascript."),
             ],
              options: new ChatOptions
              {
@@ -308,22 +314,9 @@ public static class Tools
             // Sequential create (ExecuteMultiple not available without additional assembly)
             var results = new List<object>();
 
-            // Safely access the progress token
-            ProgressToken? progressToken = null;
-            if (context.Params?.ProgressToken != null)
-            {
-                progressToken = (ProgressToken)context.Params.ProgressToken;
-            }
-
-            if (progressToken != null)
-            {
-                await server.NotifyProgressAsync(progressToken.Value, new()
-                {
-                    Progress = 0,
-                    Message = $"Starting creation of {count} contacts.",
-                    Total = count
-                });
-            }
+            // Safely access the progress token (could be absent)
+            ProgressToken? progressToken = context.Params?.ProgressToken is ProgressToken pt ? pt : null;
+            await NotifyProgress(server, progressToken, 0, $"Starting creation of {count} contacts.", count);
 
             for (int i = 0; i < count; i++)
             {
@@ -348,15 +341,7 @@ public static class Tools
                         status = "created"
                     });
 
-                    if (progressToken != null)
-                    {
-                        await server.NotifyProgressAsync(progressToken.Value, new()
-                        {
-                            Progress = i + 1,
-                            Message = $"Created {i + 1}/{count} contacts.",
-                            Total = count
-                        });
-                    }
+                    await NotifyProgress(server, progressToken, i + 1, $"Created {i + 1}/{count} contacts.", count);
                 }
                 catch (Exception createEx)
                 {
@@ -378,6 +363,29 @@ public static class Tools
         {
             Console.Error.WriteLine(ex);
             return "[ERROR] " + ex.ToString();
+        }
+    }
+}
+
+// Internal helpers
+public static partial class Tools
+{
+    private static async Task NotifyProgress(IMcpServer server, ProgressToken? token, int progress, string message, int? total = null)
+    {
+        if (token == null) return; // No progress token supplied by caller
+        try
+        {
+            await server.NotifyProgressAsync(token.Value, new()
+            {
+                Progress = progress,
+                Message = message,
+                Total = total ?? 0
+            });
+        }
+        catch (Exception ex)
+        {
+            // Swallow/log: progress updates should not break primary flow
+            Console.Error.WriteLine($"Progress notification failed: {ex.Message}");
         }
     }
 }
