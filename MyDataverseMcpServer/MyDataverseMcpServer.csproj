@@ -23,6 +23,9 @@
       <None Update="chartTemplates\template.html">
         <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       </None>
+        <None Update="chartTemplates\logo.png">
+        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      </None>
     </ItemGroup>
 
 </Project>

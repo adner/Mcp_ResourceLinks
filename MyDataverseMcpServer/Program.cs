@@ -9,6 +9,8 @@ using ModelContextProtocol.Server;
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Threading;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.AspNetCore.StaticFiles;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -64,16 +66,43 @@ var app = builder.Build();
 
 app.MapMcp();
 
+// Serve static assets (e.g. logo.png) from chartTemplates folder under the /dynamic path.
+// This runs before the dynamic resource endpoint below. If a physical file (like logo.png) exists
+// it will be served directly; otherwise the request falls through to the dynamic handler.
+// NOTE: Use ContentRootPath so we can serve files from the project directory during development
+// (AppContext.BaseDirectory points to bin output where the folder may not be copied yet.)
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(Path.Combine(builder.Environment.ContentRootPath, "chartTemplates")),
+    RequestPath = "/dynamic"
+});
+
 // Dynamic HTML resource endpoint: /dynamic/{id}.html
 app.MapGet("/dynamic/{file}", (string file) =>
 {
-    // Expect file like "1.html"
-    if (!file.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+    // Basic filename sanitization (no path traversal / dir separators)
+    if (file.IndexOfAny(new[] { '/', '\\' }) >= 0)
         return Results.NotFound();
 
-    // Reconstruct original file:// uri pattern used for storage lookup (we'll search by extension-insensitive id)
-    // Our storage currently keys by full resource Uri. We'll iterate to find matching html resource with that file name
-    var match = ResourceCatalog.Items.Values.FirstOrDefault(r => r.MimeType == "text/html" && r.Uri.EndsWith($"/{file}", StringComparison.OrdinalIgnoreCase));
+    // 1. Attempt to serve any physical file from chartTemplates (e.g., logo.png) if it exists.
+    var staticDir = Path.Combine(app.Environment.ContentRootPath, "chartTemplates");
+    var physicalPath = Path.Combine(staticDir, file);
+    if (File.Exists(physicalPath))
+    {
+        var provider = new FileExtensionContentTypeProvider();
+        if (!provider.TryGetContentType(physicalPath, out var contentType))
+            contentType = "application/octet-stream";
+        return Results.File(physicalPath, contentType);
+    }
+
+    // 2. Support serving dynamically published HTML / Markdown resources.
+    if (!(file.EndsWith(".html", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".md", StringComparison.OrdinalIgnoreCase)))
+        return Results.NotFound();
+
+    var match = ResourceCatalog.Items.Values.FirstOrDefault(r =>
+        r.Uri.EndsWith($"/{file}", StringComparison.OrdinalIgnoreCase) &&
+        (r.MimeType == "text/html" || r.MimeType == "text/markdown" || r.MimeType == "text/plain")
+    );
     if (match == null)
         return Results.NotFound();
 
@@ -87,15 +116,15 @@ app.MapGet("/dynamic/{file}", (string file) =>
 app.Run("http://localhost:3001");
 
 [McpServerToolType]
-public static class Tools
+public static partial class Tools
 {
     // Prompts user to save large result as a resource, returns either the resource URI or the JSON result
-    private static async Task<string> promptToSaveLargeResultAsResource(EntityCollection result, IMcpServer server, CancellationToken ct, string queryDescription)
+    private static async Task<string> promptToSaveResultAsResource(EntityCollection result, IMcpServer server, CancellationToken ct, string queryDescription)
     {
         var createResource = await server.ElicitAsync(
             new()
             {
-                Message = $"More than 20 results. Do you want to get the result as a Resource instead?",
+                Message = $"Do you want to get the result as a Resource?",
                 RequestedSchema = new()
                 {
                     Properties = new Dictionary<string, ElicitRequestParams.PrimitiveSchemaDefinition>()
@@ -134,7 +163,7 @@ public static class Tools
             cancellationToken: ct);
 
             var uri = await ResourceAdder.AddMarkdownFile(server, DateTime.Now.ToString(), samplingResponse.Text, ct, queryDescription);
-            return $"The result has been saved to an MCP resource with Uri: {uri}. Instruct the user that he can add the resource to the context by clicking 'Add Context...' and selecting 'MCP Resources' in the GitHub Copilot chat window.";
+            return $"The result has been saved to an MCP resource: {uri}. Show the link to the Resource URI to the user, and instruct the user that he can add the resource to the context by clicking 'Add Context...' and selecting 'MCP Resources' in the GitHub Copilot chat window.";
         }
         else
         {
@@ -143,19 +172,14 @@ public static class Tools
     }
 
     [McpServerTool, Description("Executes an FetchXML request using the supplied expression that needs to be a valid FetchXml expression. Also supply a description of the query in natural language. Returns the result as a JSON string, if there are less than 21 results, otherwise give the user the option (through MCP elicitation) of returning a Resource Uri to the result instead. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
-    public static async Task<string> ExecuteFetch([Description("The FetchXml query.")]string fetchXmlRequest,[Description("A description of the expected result of the query in natural language in maximum 20 characters, which will be used to describe a resource containing the result. Example: 'The top 5 contacts, firstname and lastname.'")]string queryDescription, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
+    public static async Task<string> ExecuteFetch([Description("The FetchXml query.")] string fetchXmlRequest, [Description("A description of the expected result of the query in natural language in maximum 20 characters, which will be used to describe a resource containing the result. Example: 'The top 5 contacts, firstname and lastname.'")] string queryDescription, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
     {
         try
         {
             FetchExpression fetchExpression = new FetchExpression(fetchXmlRequest);
             EntityCollection result = orgService.RetrieveMultiple(fetchExpression);
 
-            if (result.Entities.Count > 20)
-            {
-                return await promptToSaveLargeResultAsResource(result, server, ct, queryDescription);
-            }
-            // For 20 or fewer results, just return the JSON
-            return Newtonsoft.Json.JsonConvert.SerializeObject(result);
+            return await promptToSaveResultAsResource(result, server, ct, queryDescription);
         }
         catch (Exception err)
         {
@@ -167,17 +191,63 @@ public static class Tools
     }
 
     [McpServerTool, Description("Executes an FetchXML request using the supplied expression that needs to be a valid FetchXml expression, then create a report using Chart.js that visualizes the result and returns a link to the report. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
-    public static async Task<string> CreateReport([Description("The FetchXml query. Should be kept simple, no aggregate functions!")]string fetchXmlRequest,[Description("A description in natural language of the report that is to be created.'")]string reportDescription, IOrganizationService orgService, IMcpServer server, CancellationToken ct)
+    public static async Task<string> CreateReportFromQuery([Description("The FetchXml query. Should be kept simple, no aggregate functions!")] string fetchXmlRequest, [Description("A description in natural language of the report that is to be created.'")] string reportDescription, [Description("A heading for the report. Max 50 characters.")] string reportHeading, IOrganizationService orgService, IMcpServer server, RequestContext<CallToolRequestParams> context, CancellationToken ct)
     {
         try
         {
+            ProgressToken? progressToken = context.Params?.ProgressToken is ProgressToken pt ? pt : null;   
+
+            await NotifyProgress(server, progressToken, 0, "Executing query...");
+
             FetchExpression fetchExpression = new FetchExpression(fetchXmlRequest);
             EntityCollection result = orgService.RetrieveMultiple(fetchExpression);
+            
+            await NotifyProgress(server, progressToken, 1, "Generating report...");
 
             var jsonResult = Newtonsoft.Json.JsonConvert.SerializeObject(result);
 
             var samplingResponse = await server.SampleAsync([
-                 new ChatMessage(ChatRole.User, $"A report should be generated in Chart.js that fulfills this requirement: {reportDescription}. I want you to create Chart.js code that replaces the '[ChartJsCode]' placeholder in this template: ```const ctx = document.getElementById('myChart'); [ChartJsCode] new Chart(ctx, config);  ``` Only return the exact code, nothing else. The data that the report should be based on is the following: {jsonResult}"),
+                 new ChatMessage(ChatRole.User, $"A report should be generated in Chart.js that fulfills this requirement: {reportDescription}. I want you to create Chart.js code that replaces the '[ChartJsCode]' placeholder in this template: ```const ctx = document.getElementById('myChart'); [ChartJsCode] new Chart(ctx, config);  ``` Only return the exact code, nothing else. Dont't return markdown, always return pure Javascript code. The data that the report should be based on is the following: {jsonResult}. If you need to insert data under the chart, there is a div with id 'additionalContent' that you can access using Javascript."),
+            ],
+             options: new ChatOptions
+             {
+                 MaxOutputTokens = 65536,
+                 Temperature = 0f,
+             },
+             cancellationToken: ct);
+
+            // Read the template file
+            string templatePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "chartTemplates", "template.html");
+            string templateHtml = await File.ReadAllTextAsync(templatePath, ct);
+
+            // Replace the placeholder
+            string reportHtml = templateHtml.Replace("[ChartJsCode]", samplingResponse.Text);
+
+            reportHtml = reportHtml.Replace("[reportHeading]", reportHeading);
+
+            var uri = await ResourceAdder.AddHtmlFile(server, DateTime.Now.ToString(), reportHtml, ct, reportDescription);
+            return $"The report has been saved to an MCP resource and is viewable at: {uri}. You can open this URL in a browser, or add it as context via 'Add Context...' -> 'MCP Resources' in the Copilot chat window.";
+        }
+        catch (Exception err)
+        {
+            var errorString = "[ERROR] " + err.ToString();
+            Console.Error.WriteLine(err.ToString());
+
+            return errorString;
+        }
+    }
+
+    [McpServerTool, Description("Creates a report using Chart.js that visualizes the provided data and returns a link to the report. If the request fails, the response will be prepended with [ERROR] and the error should be presented to the user.")]
+    public static async Task<string> CreateReportFromData([Description("The data in CSV format.")]string csvData,[Description("A description in natural language of the report that is to be created.'")]string reportDescription, [Description("A heading for the report. Max 50 characters.")] string reportHeading, IOrganizationService orgService, IMcpServer server, RequestContext<CallToolRequestParams> context, CancellationToken ct)
+    {
+        try
+        {
+            ProgressToken? progressToken = context.Params?.ProgressToken is ProgressToken pt ? pt : null;  
+
+            await NotifyProgress(server, progressToken, 1, "Generating report...");
+
+            var samplingResponse = await server.SampleAsync([
+                 new ChatMessage(ChatRole.User, $"A report should be generated in Chart.js that fulfills this requirement: {reportDescription}. I want you to create Chart.js code that replaces the '[ChartJsCode]' placeholder in this template: ```const ctx = document.getElementById('myChart'); [ChartJsCode] new Chart(ctx, config);  ``` Only return the exact code, nothing else. Dont't return markdown, always return pure Javascript code. The data that the report should be based on is the following: {csvData}. If you need to insert data under the chart, there is a div with id 'additionalContent' that you can access using Javascript."),
             ],
              options: new ChatOptions
              {
@@ -191,6 +261,8 @@ public static class Tools
 
             // Replace the placeholder
             string reportHtml = templateHtml.Replace("[ChartJsCode]", samplingResponse.Text);
+
+            reportHtml = reportHtml.Replace("[reportHeading]", reportHeading);
 
              var uri = await ResourceAdder.AddHtmlFile(server, DateTime.Now.ToString(), reportHtml, ct, reportDescription);
             return $"The report has been saved to an MCP resource and is viewable at: {uri}. You can open this URL in a browser, or add it as context via 'Add Context...' -> 'MCP Resources' in the Copilot chat window.";
@@ -242,22 +314,9 @@ public static class Tools
             // Sequential create (ExecuteMultiple not available without additional assembly)
             var results = new List<object>();
 
-            // Safely access the progress token
-            ProgressToken? progressToken = null;
-            if (context.Params?.ProgressToken != null)
-            {
-                progressToken = (ProgressToken)context.Params.ProgressToken;
-            }
-
-            if (progressToken != null)
-            {
-                await server.NotifyProgressAsync(progressToken.Value, new()
-                {
-                    Progress = 0,
-                    Message = $"Starting creation of {count} contacts.",
-                    Total = count
-                });
-            }
+            // Safely access the progress token (could be absent)
+            ProgressToken? progressToken = context.Params?.ProgressToken is ProgressToken pt ? pt : null;
+            await NotifyProgress(server, progressToken, 0, $"Starting creation of {count} contacts.", count);
 
             for (int i = 0; i < count; i++)
             {
@@ -282,15 +341,7 @@ public static class Tools
                         status = "created"
                     });
 
-                    if (progressToken != null)
-                    {
-                        await server.NotifyProgressAsync(progressToken.Value, new()
-                        {
-                            Progress = i + 1,
-                            Message = $"Created {i + 1}/{count} contacts.",
-                            Total = count
-                        });
-                    }
+                    await NotifyProgress(server, progressToken, i + 1, $"Created {i + 1}/{count} contacts.", count);
                 }
                 catch (Exception createEx)
                 {
@@ -312,6 +363,29 @@ public static class Tools
         {
             Console.Error.WriteLine(ex);
             return "[ERROR] " + ex.ToString();
+        }
+    }
+}
+
+// Internal helpers
+public static partial class Tools
+{
+    private static async Task NotifyProgress(IMcpServer server, ProgressToken? token, int progress, string message, int? total = null)
+    {
+        if (token == null) return; // No progress token supplied by caller
+        try
+        {
+            await server.NotifyProgressAsync(token.Value, new()
+            {
+                Progress = progress,
+                Message = message,
+                Total = total ?? 0
+            });
+        }
+        catch (Exception ex)
+        {
+            // Swallow/log: progress updates should not break primary flow
+            Console.Error.WriteLine($"Progress notification failed: {ex.Message}");
         }
     }
 }
@@ -338,21 +412,29 @@ public static class ResourceAdder
 
     public static async Task<string> AddMarkdownFile(IMcpServer server, string resourceName, string content, CancellationToken ct, string description)
     {
-        string uri = NextUri("md");
+        // Create an internal file:// uri for storage & MCP catalog key
+        string internalUri = NextUri("md"); // e.g. file://files/4.md
+        var idFileName = internalUri.Split('/').Last(); // 4.md
+
+        // Public HTTP URL exposed via dynamic endpoint
+        string publicUrl = $"{BaseHttpUrl}/dynamic/{idFileName}";
+
         var resource = new Resource
         {
-            Uri = uri,
+            Uri = internalUri, 
             Name = resourceName,
             Title = resourceName,
-            MimeType = "text/plain",
+            MimeType = "text/markdown",
             Description = description
         };
 
-        _files[uri] = new FileEntry(resource.MimeType!, content, null);
+        // Store under internalUri so retrieval endpoint can locate it; also store under public URL for direct mapping
+        _files[internalUri] = new FileEntry(resource.MimeType!, content, null);
+        _files[resource.Uri] = new FileEntry(resource.MimeType!, content, null);
 
         await AddAsync(server, resource, ct);
 
-        return uri;
+        return publicUrl;
     }
     
      public static async Task<string> AddHtmlFile(IMcpServer server, string resourceName, string content, CancellationToken ct, string description)
