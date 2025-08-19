@@ -5,7 +5,7 @@ This repository demonstrates a sophisticated **Model Context Protocol (MCP) Serv
 ## Key MCP Features Implemented
 
 ### 🔄 [MCP Elicitation](https://modelcontextprotocol.io/specification/draft/client/elicitation)
-When FetchXML queries return large result sets (>20 records), the server prompts users to choose between receiving raw JSON or saving results as formatted resources.
+The server prompts users to choose between receiving raw JSON or saving results as formatted resources.
 
 ### 🧠 [MCP Sampling](https://modelcontextprotocol.io/specification/draft/client/sampling)
 Data transformation by internal calls to the LLM - **sampling** - to convert raw Dataverse JSON responses into user-friendly formats including markdown tables and interactive Chart.js visualizations.
@@ -49,8 +49,11 @@ Real-time progress notifications during bulk operations (e.g., creating multiple
 This [video](https://www.youtube.com/watch?v=d1r9o559xkM) demonstrates VS Code using this MCP Server to:
 - Retrieve Dataverse data through FetchXML queries
 - Transform large result sets into `Markdown` formatted resources
-- Generate interactive Chart.js visualizations from Dataverse data
 - Optional adding of resources to the AI context window for enhanced conversations
+
+This [video](https://www.youtube.com/watch?v=xZ4fWOyD_dk) demonstrates the report generation functionality:
+- Retrieve Dataverse data through FetchXML queries and make them available as MCP Resources.
+- Converting the result to a Chart.js visualization, using natural language.
 
 ## Technical Implementation
 
@@ -68,4 +71,3 @@ Built with:
 3. Run: `dotnet run --project MyDataverseMcpServer --environment Development`
 4. Server runs on `http://localhost:3001`
 
-The server demonstrates how MCP can create sophisticated, interactive experiences that go far beyond simple request-response patterns, including dynamic visualization generation and browser-viewable reports.
